@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed design for the first product iteration. No implementation may begin until this document is explicitly approved.
+Approved for implementation on 2026-10-31.
 
 ## Intent and why
 
