@@ -14,7 +14,7 @@ The system is intended to help management decide where additional human investig
 
 - The only intended users are senior managers.
 - The application runs entirely inside the corporate network.
-- The development and test environment uses a locally deployed GitLab.
+- The development and test environment uses GitLab `19.3.6-ee` deployed by a dedicated Docker Compose integration profile.
 - Production connects to the company’s self-managed GitLab `19.3.6-ee` (Enterprise Edition), which is the compatibility baseline for the first iteration.
 - The first iteration has no application-level authentication. Network isolation is therefore mandatory.
 - A senior manager’s GitLab personal access token supplies the application’s GitLab permissions.
@@ -281,9 +281,14 @@ The first supported server baseline is GitLab `19.3.6-ee`. Synchronization recor
 
 - pytest for domain, storage and API tests
 - mocked GitLab HTTP fixtures for pagination, retries and permission gaps
+- a separate Docker Compose integration profile running the exact `gitlab/gitlab-ee:19.3.6-ee.0` image
+- an idempotent seed process that creates deterministic users, repositories, commits, merge requests, discussions and approvals in the local GitLab
+- live-GitLab integration tests for version/capability detection, real REST pagination and object shapes, full synchronization, report totals, source links and idempotent reruns
 - migration tests against PostgreSQL
 - Vitest and Testing Library for frontend behavior
 - Playwright for synchronization, report filtering and person-card drill-down journeys
+
+The live-GitLab suite is an explicit pre-release gate but is kept out of the default fast pytest suite because GitLab startup and seeding are resource-intensive. Mocked HTTP tests remain responsible for deterministic transport failures and permission variants that would be expensive or brittle to reproduce against a live server. The integration harness waits for GitLab readiness, fails with diagnostic container logs on timeout, uses only generated test credentials and can be rerun without duplicating fixture data.
 
 ### Deployment
 
@@ -293,6 +298,8 @@ Docker Compose services:
 - `api`: FastAPI HTTP service;
 - `sync-worker`: the same Python image running the dedicated synchronization loop;
 - `postgres`: persistent database.
+
+An additional Compose file/profile supplies test-only `gitlab`, seed and integration-runner services. It pins `gitlab/gitlab-ee:19.3.6-ee.0`, keeps GitLab data isolated from application PostgreSQL, does not join the normal production startup path and exposes no test credentials outside the integration environment. The default `docker compose up` continues to start only the application services above.
 
 No Redis, Celery, external telemetry or external cloud services.
 
@@ -433,6 +440,9 @@ Indexes must cover interval, project, attributed user and source-object keys. Ma
 
 Before release, verify:
 
+- the Dockerized server reports exactly GitLab `19.3.6-ee` and passes required capability checks;
+- the deterministic local-GitLab fixture can be seeded and reseeded without duplicate users, projects or activity;
+- the client and full synchronization work against real GitLab users, projects, commits, merge requests, discussions, approvals and changes rather than only mocked response shapes;
 - idempotent repeated synchronization;
 - recovery from a failed mid-project run;
 - progress visibility and overlap prevention;
