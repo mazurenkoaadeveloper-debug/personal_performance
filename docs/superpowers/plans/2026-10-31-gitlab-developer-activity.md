@@ -1,39 +1,39 @@
-# GitLab Developer Activity Analytics Implementation Plan
+# План реализации аналитики активности разработчиков в GitLab
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Для агентов-исполнителей:** ОБЯЗАТЕЛЬНЫЙ НАВЫК: используйте `superpowers:subagent-driven-development` (рекомендуется) или `superpowers:executing-plans`, чтобы выполнять план по одной задаче. Для отслеживания используются чекбоксы `- [ ]`.
 
-**Goal:** Build an internal web application that synchronizes the latest 12 months from GitLab `19.3.6-ee` and provides sortable user activity reports and detailed per-user contribution views.
+**Цель:** создать внутреннее веб-приложение, которое синхронизирует последние 12 месяцев данных из GitLab `19.3.6-ee` и показывает сортируемую статистику активности пользователей с подробной карточкой вклада каждого человека.
 
-**Architecture:** A modular Python monolith runs as separate FastAPI and dedicated synchronization-worker processes over one PostgreSQL database. A React SPA queries report-ready APIs; all filters run against PostgreSQL, while the GitLab token and raw diffs remain server-side and transient.
+**Архитектура:** модульный Python-монолит запускается двумя процессами — FastAPI API и специализированным worker синхронизации — поверх одной PostgreSQL. React SPA получает данные через отчётный API; фильтры работают по локальной БД, а GitLab-токен и содержимое diff остаются только на сервере и обрабатываются транзитно.
 
-**Tech Stack:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, httpx, pytest; TypeScript, React, Vite, React Router, TanStack Query, TanStack Table, Material UI, Apache ECharts, Vitest, Testing Library, Playwright; Docker Compose.
+**Стек:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, httpx, pytest; TypeScript, React, Vite, React Router, TanStack Query, TanStack Table, Material UI, Apache ECharts, Vitest, Testing Library, Playwright; Docker Compose.
 
-**Spec:** `docs/superpowers/specs/2026-10-31-gitlab-developer-activity-design.md`
+**Спецификация:** `docs/superpowers/specs/2026-10-31-gitlab-developer-activity-design.md`
 
-## Global Constraints
+## Общие ограничения
 
-- Target exactly GitLab `19.3.6-ee`; fail visibly when required capabilities are unavailable.
-- Run entirely inside the corporate network with no external telemetry or cloud services.
-- Retain only the latest rolling 12 months, while retaining older object metadata only when needed to interpret in-window activity or current open MRs.
-- Never persist source code or raw diff bodies; persist only normalized metadata and file-level statistics.
-- Never store, log, return or expose the GitLab token; accept it only through environment configuration or a Docker secret.
-- Use PostgreSQL for durable sync jobs and report data; do not add Celery, Redis or webhooks.
-- Keep rankings, scores, anomaly detection, Jira, Confluence, authentication and SSO out of this iteration.
-- Distinguish zero activity, unavailable data and not-yet-synchronized data in backend schemas and UI copy.
-- Interpret report boundaries in the configured IANA timezone, default `Europe/Moscow`, and persist timestamps in UTC.
-- Use TDD for every task and commit only after the named focused tests and the relevant broader suite pass.
+- Целевая версия — строго GitLab `19.3.6-ee`; отсутствие обязательных возможностей должно приводить к явной ошибке совместимости.
+- Система полностью работает внутри корпоративного контура, без внешней телеметрии и облачных сервисов.
+- Хранятся последние скользящие 12 месяцев; более старые метаданные допустимы только для интерпретации событий внутри окна и текущих открытых MR.
+- Исходный код и необработанные diff никогда не сохраняются; в БД попадают только нормализованные метаданные и файловая статистика.
+- GitLab-токен нельзя сохранять, логировать, возвращать в API или передавать frontend; он поступает только через переменную окружения или Docker secret.
+- PostgreSQL используется и для заданий синхронизации, и для отчётных данных; Celery, Redis и webhooks не добавляются.
+- В первую версию не входят рейтинги, баллы, поиск аномалий, Jira, Confluence, авторизация и SSO.
+- Backend-схемы и UI должны различать нулевую активность, недоступные данные и ещё не синхронизированные данные.
+- Границы отчёта трактуются в настроенной IANA timezone, по умолчанию `Europe/Moscow`; все timestamp хранятся в UTC.
+- Каждая задача выполняется через TDD и коммитится только после прохождения указанных фокусных и релевантных общих тестов.
 
-## Review Focus
+## Особое внимание при ревью
 
-- GitLab returns `401`, `403`, missing pagination totals or partial endpoint data: show unavailable/coverage warnings and never convert these cases into zero activity (Task 3 tests).
-- A squash/merge/direct-commit combination refers to the same accepted change: count it once and retain correct source drill-down (Task 6 tests).
-- A generated, vendored, binary or repository-specific excluded file appears in a diff: exclude its line counts, record the reason and never persist raw diff text (Task 7 tests).
-- A user selects a repository and arbitrary timezone-aware interval boundary: apply identical filters to list, card, timeline and source facts, including DST/local-midnight boundaries (Tasks 8 and 9 tests).
-- A synchronization process crashes after partial writes: keep the previous successful report watermark visible, expire the lease and complete a retry idempotently (Task 4 tests).
+- GitLab возвращает `401`, `403`, не отдаёт pagination totals или часть endpoint-данных: UI показывает недоступность/неполное покрытие и не превращает их в ноль (тесты задачи 3).
+- Squash, merge commit и direct commit относятся к одному принятому изменению: вклад учитывается один раз, ссылки на источник сохраняются (тесты задачи 6).
+- Diff содержит generated, vendor, binary или исключённый для репозитория файл: строки не учитываются, причина сохраняется, исходный diff в БД не попадает (тесты задачи 7).
+- Пользователь выбирает репозиторий и произвольный период с timezone-границами: один фильтр применяется к списку, карточке, таймлайну и исходным фактам, включая DST и локальную полночь (тесты задач 8–9).
+- Worker падает после частичной записи: отчёты продолжают использовать предыдущий успешный watermark, lease истекает, повторный запуск идемпотентно завершает синхронизацию (тесты задачи 4).
 
 ---
 
-## Planned file structure
+## Планируемая структура файлов
 
 ```text
 backend/
@@ -47,7 +47,7 @@ backend/
     activity/{models.py,identity.py,ingestion.py,diff_stats.py}
     reports/{schemas.py,queries.py,routes.py,time.py}
   migrations/{env.py,versions/0001_initial_schema.py}
-  tests/{conftest.py,core/,gitlab/,sync/,activity/,reports/}
+  tests/{conftest.py,core/,gitlab/,sync/,activity/,reports/,integration/}
 frontend/
   package.json
   vite.config.ts
@@ -63,679 +63,678 @@ frontend/
 compose.yaml
 .env.example
 README.md
+docs/operations.md
 ```
 
-Files are grouped by responsibility. Route modules translate HTTP only; GitLab DTOs remain in `gitlab`; normalized facts remain in `activity`; SQL aggregation remains in `reports`.
+Файлы группируются по ответственности. Route-модули только преобразуют HTTP; GitLab DTO остаются в `gitlab`, нормализованные факты — в `activity`, SQL-агрегация — в `reports`.
 
-### Task 1: Runnable application skeleton and typed configuration
+### Задача 1: Запускаемый каркас приложения и типизированная конфигурация
 
-**Files:**
-- Create: `backend/pyproject.toml`
-- Create: `backend/app/__init__.py`
-- Create: `backend/app/main.py`
-- Create: `backend/app/core/config.py`
-- Create: `backend/app/core/database.py`
-- Create: `backend/app/core/logging.py`
-- Create: `backend/tests/conftest.py`
-- Create: `backend/tests/core/test_config.py`
-- Create: `backend/tests/test_health.py`
-- Create: `frontend/package.json`
-- Create: `frontend/vite.config.ts`
-- Create: `frontend/index.html`
-- Create: `frontend/src/main.tsx`
-- Create: `frontend/src/app/App.tsx`
-- Create: `frontend/src/app/theme.ts`
-- Create: `frontend/src/test/setup.ts`
-- Create: `frontend/src/app/App.test.tsx`
-- Create: `compose.yaml`
-- Create: `.env.example`
+**Файлы:**
+- Создать: `backend/pyproject.toml`
+- Создать: `backend/app/__init__.py`
+- Создать: `backend/app/main.py`
+- Создать: `backend/app/core/config.py`
+- Создать: `backend/app/core/database.py`
+- Создать: `backend/app/core/logging.py`
+- Создать: `backend/tests/conftest.py`
+- Создать: `backend/tests/core/test_config.py`
+- Создать: `backend/tests/test_health.py`
+- Создать: `frontend/package.json`
+- Создать: `frontend/vite.config.ts`
+- Создать: `frontend/index.html`
+- Создать: `frontend/src/main.tsx`
+- Создать: `frontend/src/app/App.tsx`
+- Создать: `frontend/src/app/theme.ts`
+- Создать: `frontend/src/test/setup.ts`
+- Создать: `frontend/src/app/App.test.tsx`
+- Создать: `compose.yaml`
+- Создать: `.env.example`
 
-**Interfaces:**
-- Produces: `Settings` with `gitlab_base_url: AnyHttpUrl`, `gitlab_token: SecretStr`, `database_url: str`, `report_timezone: str = "Europe/Moscow"`, `retention_days: int = 365`, `gitlab_project_ids: tuple[int, ...]`.
-- Produces: `get_settings() -> Settings`, `get_session() -> AsyncIterator[AsyncSession]`, `create_app() -> FastAPI` and `GET /api/health -> {"status": "ok"}`.
-- Produces: Compose services named `frontend`, `api`, `sync-worker`, and `postgres`; the worker command may initially exit with a clear “not implemented” status until Task 4.
+**Интерфейсы:**
+- Результат: `Settings` с полями `gitlab_base_url: AnyHttpUrl`, `gitlab_token: SecretStr`, `database_url: str`, `report_timezone: str = "Europe/Moscow"`, `retention_days: int = 365`, `gitlab_project_ids: tuple[int, ...]`.
+- Результат: `get_settings() -> Settings`, `get_session() -> AsyncIterator[AsyncSession]`, `create_app() -> FastAPI`, `GET /api/health -> {"status": "ok"}`.
+- Результат: Compose-сервисы `frontend`, `api`, `sync-worker`, `postgres`; до задачи 4 worker может завершаться с явным сообщением «not implemented».
 
-- [ ] **Step 1: Write failing backend configuration and health tests**
+- [ ] **Шаг 1: Написать падающие тесты конфигурации и health endpoint**
 
-Assert that `Settings` rejects a missing token/project list, accepts `Europe/Moscow`, represents the token as a secret, and that `/api/health` returns exactly `{"status": "ok"}` without configuration secrets.
+Проверить, что `Settings` отклоняет отсутствующий токен и пустой список проектов, принимает `Europe/Moscow`, скрывает токен как secret, а `/api/health` возвращает строго `{"status": "ok"}` без секретов.
 
-- [ ] **Step 2: Run backend tests and verify failure**
+- [ ] **Шаг 2: Запустить backend-тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/core/test_config.py tests/test_health.py -v`
+Команда: `cd backend && pytest tests/core/test_config.py tests/test_health.py -v`
 
-Expected: FAIL because `app.core.config` and `create_app` do not exist.
+Ожидание: FAIL, потому что `app.core.config` и `create_app` не существуют.
 
-- [ ] **Step 3: Implement the backend skeleton**
+- [ ] **Шаг 3: Реализовать backend-каркас**
 
-Implement the interfaces above. Configure structured stdout logs with an authorization/token redaction filter and an async SQLAlchemy session factory; do not create feature routes yet.
+Реализовать указанные интерфейсы, structured logs в stdout с редактированием token/authorization и async SQLAlchemy session factory. Feature routes пока не добавлять.
 
-- [ ] **Step 4: Write and run the failing frontend shell test**
+- [ ] **Шаг 4: Написать и запустить падающий тест frontend-каркаса**
 
-Assert that `<App />` renders the product title and navigation placeholders for “Developers” and “Synchronization”.
+Проверить, что `<App />` отображает название продукта и пункты «Разработчики» и «Синхронизация».
 
-Run: `cd frontend && npm test -- --run src/app/App.test.tsx`
+Команда: `cd frontend && npm test -- --run src/app/App.test.tsx`
 
-Expected: FAIL before the React shell exists.
+Ожидание: FAIL до создания React-каркаса.
 
-- [ ] **Step 5: Implement the React shell and Compose wiring**
+- [ ] **Шаг 5: Реализовать React-каркас и Compose**
 
-Create the Material UI theme and application shell. Configure Vite’s development proxy for `/api`; configure Compose health checks and expose only frontend/API ports, not PostgreSQL.
+Добавить Material UI theme, оболочку приложения и Vite proxy для `/api`. В Compose настроить health checks; PostgreSQL наружу не публиковать.
 
-- [ ] **Step 6: Verify the task**
+- [ ] **Шаг 6: Проверить задачу**
 
-Run: `cd backend && pytest tests/core/test_config.py tests/test_health.py -v`
+Команды:
 
-Run: `cd frontend && npm test -- --run src/app/App.test.tsx`
+```bash
+cd backend && pytest tests/core/test_config.py tests/test_health.py -v
+cd frontend && npm test -- --run src/app/App.test.tsx
+docker compose config --quiet
+```
 
-Run: `docker compose config --quiet`
+Ожидание: все команды завершаются с кодом 0.
 
-Expected: all commands exit 0.
-
-- [ ] **Step 7: Commit**
+- [ ] **Шаг 7: Сделать коммит**
 
 ```bash
 git add backend frontend compose.yaml .env.example
 git commit -m "feat: scaffold activity analytics application"
 ```
 
-### Task 2: PostgreSQL domain schema and migrations
+### Задача 2: PostgreSQL-схема и миграции
 
-**Files:**
-- Create: `backend/alembic.ini`
-- Create: `backend/migrations/env.py`
-- Create: `backend/migrations/versions/0001_initial_schema.py`
-- Create: `backend/app/sync/models.py`
-- Create: `backend/app/activity/models.py`
-- Create: `backend/tests/core/test_migrations.py`
-- Create: `backend/tests/activity/test_model_constraints.py`
+**Файлы:**
+- Создать: `backend/alembic.ini`
+- Создать: `backend/migrations/env.py`
+- Создать: `backend/migrations/versions/0001_initial_schema.py`
+- Создать: `backend/app/sync/models.py`
+- Создать: `backend/app/activity/models.py`
+- Создать: `backend/tests/core/test_migrations.py`
+- Создать: `backend/tests/activity/test_model_constraints.py`
 
-**Interfaces:**
-- Produces SQLAlchemy models: `Repository`, `User`, `UserAlias`, `MergeRequest`, `Commit`, `Review`, `Approval`, `FileChange`, `SyncJob`, `SyncProjectStatus`, `AppConfig`.
-- Stable source keys: repository GitLab ID; `(repository_id, iid)` for MRs; `(repository_id, sha)` for commits; deterministic source-event keys for reviews/approvals/file changes.
-- `SyncJob` states: `pending`, `running`, `succeeded`, `failed`; stores lease expiry, progress, warnings, error summary, timestamps, and report watermark candidate.
+**Интерфейсы:**
+- Результат: SQLAlchemy-модели `Repository`, `User`, `UserAlias`, `MergeRequest`, `Commit`, `Review`, `Approval`, `FileChange`, `SyncJob`, `SyncProjectStatus`, `AppConfig`.
+- Стабильные ключи: GitLab ID репозитория; `(repository_id, iid)` для MR; `(repository_id, sha)` для commit; детерминированные ключи событий для review, approvals и file changes.
+- Состояния `SyncJob`: `pending`, `running`, `succeeded`, `failed`; сохраняются lease, progress, warnings, error summary, timestamps и кандидат report watermark.
 
-- [ ] **Step 1: Write failing migration and constraint tests**
+- [ ] **Шаг 1: Написать падающие тесты миграций и ограничений**
 
-Test migration upgrade from an empty PostgreSQL database, uniqueness of GitLab source keys, UTC-aware timestamps, JSON warning/progress fields, and rejection of a second active sync job by a partial unique index.
+Проверить upgrade пустой PostgreSQL, уникальность source keys, timezone-aware timestamp, JSON-поля прогресса/предупреждений и запрет второго активного sync job через partial unique index.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/core/test_migrations.py tests/activity/test_model_constraints.py -v`
+Команда: `cd backend && pytest tests/core/test_migrations.py tests/activity/test_model_constraints.py -v`
 
-Expected: FAIL because migrations and models do not exist.
+Ожидание: FAIL, потому что модели и миграции отсутствуют.
 
-- [ ] **Step 3: Implement the schema and initial migration**
+- [ ] **Шаг 3: Реализовать схему и первую миграцию**
 
-Use PostgreSQL enums/check constraints where they make invalid states impossible. Store no diff body or code-content column. Add indexes for `(user_id, event_time)`, `(repository_id, event_time)`, MR timestamps/state, and sync-job state/lease.
+Использовать PostgreSQL enum/check constraints там, где они исключают некорректные состояния. Не создавать колонок для кода или diff body. Добавить индексы `(user_id, event_time)`, `(repository_id, event_time)`, MR timestamps/state и sync-job state/lease.
 
-- [ ] **Step 4: Verify migration round-trip and constraints**
+- [ ] **Шаг 4: Проверить миграции и ограничения**
 
-Run: `cd backend && pytest tests/core/test_migrations.py tests/activity/test_model_constraints.py -v`
+Команда: `cd backend && pytest tests/core/test_migrations.py tests/activity/test_model_constraints.py -v`
 
-Expected: PASS, including upgrade, downgrade, and upgrade again.
+Ожидание: PASS, включая upgrade, downgrade и повторный upgrade.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5: Сделать коммит**
 
 ```bash
 git add backend/alembic.ini backend/migrations backend/app/sync/models.py backend/app/activity/models.py backend/tests
 git commit -m "feat: add activity data schema"
 ```
 
-### Task 3: GitLab 19.3.6-ee client and capability validation
+### Задача 3: GitLab-клиент и проверка совместимости с 19.3.6-ee
 
-**Files:**
-- Create: `backend/app/gitlab/__init__.py`
-- Create: `backend/app/gitlab/schemas.py`
-- Create: `backend/app/gitlab/client.py`
-- Create: `backend/tests/gitlab/test_client.py`
-- Create: `backend/tests/gitlab/fixtures/`
+**Файлы:**
+- Создать: `backend/app/gitlab/__init__.py`
+- Создать: `backend/app/gitlab/schemas.py`
+- Создать: `backend/app/gitlab/client.py`
+- Создать: `backend/tests/gitlab/test_client.py`
+- Создать: `backend/tests/gitlab/fixtures/`
 
-**Interfaces:**
-- Produces: `GitLabClient(base_url: str, token: SecretStr, transport: httpx.AsyncBaseTransport | None = None)`.
-- Produces: `get_version() -> GitLabVersion`, `validate_capabilities() -> CapabilityReport`, `iter_active_users()`, `iter_projects(project_ids)`, `iter_merge_requests(project_id, updated_after)`, `iter_commits(project_id, ref, since)`, `iter_discussions(project_id, mr_iid)`, `get_approvals(project_id, mr_iid)`, `iter_mr_changes(project_id, mr_iid)` as async iterators/typed DTOs.
-- `CapabilityReport` distinguishes required capability failure from optional metric unavailability.
+**Интерфейсы:**
+- Результат: `GitLabClient(base_url: str, token: SecretStr, transport: httpx.AsyncBaseTransport | None = None)`.
+- Результат: `get_version() -> GitLabVersion`, `validate_capabilities() -> CapabilityReport`, async-итераторы `iter_active_users()`, `iter_projects(project_ids)`, `iter_merge_requests(project_id, updated_after)`, `iter_commits(project_id, ref, since)`, `iter_discussions(project_id, mr_iid)`, `get_approvals(project_id, mr_iid)`, `iter_mr_changes(project_id, mr_iid)`.
+- `CapabilityReport` различает отсутствие обязательной возможности и недоступность необязательной метрики.
 
-- [ ] **Step 1: Write failing HTTP-contract tests**
+- [ ] **Шаг 1: Написать падающие контрактные HTTP-тесты**
 
-Cover token header use without log exposure, keyset/page pagination, `Retry-After`, bounded retries for `429` and transient `5xx`, immediate typed errors for `401/403`, missing total headers, GitLab `19.3.6-ee` acceptance, incompatible version rejection, and optional approval-history unavailability.
+Покрыть token header без утечки в логи, pagination с/без totals, `Retry-After`, ограниченные повторы `429` и временных `5xx`, немедленные типизированные ошибки `401/403`, принятие `19.3.6-ee`, отклонение несовместимой версии и необязательную недоступность истории approvals.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/gitlab/test_client.py -v`
+Команда: `cd backend && pytest tests/gitlab/test_client.py -v`
 
-Expected: FAIL because `GitLabClient` does not exist.
+Ожидание: FAIL, потому что `GitLabClient` отсутствует.
 
-- [ ] **Step 3: Implement DTOs and the thin REST client**
+- [ ] **Шаг 3: Реализовать DTO и тонкий REST-клиент**
 
-Centralize URL construction, timeout, pagination and retry policy. Return typed results and coverage errors; never emit authorization headers, response diff bodies or token values into logs.
+Централизовать URL, timeout, pagination и retry policy. Возвращать типизированные данные и coverage errors; не логировать authorization, токен и содержимое diff.
 
-- [ ] **Step 4: Verify client contracts**
+- [ ] **Шаг 4: Проверить контракты клиента**
 
-Run: `cd backend && pytest tests/gitlab/test_client.py -v`
+Команда: `cd backend && pytest tests/gitlab/test_client.py -v`
 
-Expected: PASS for success, partial-capability and failure fixtures.
+Ожидание: PASS для успешных, частично доступных и ошибочных fixtures.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5: Сделать коммит**
 
 ```bash
 git add backend/app/gitlab backend/tests/gitlab
 git commit -m "feat: add compatible GitLab API client"
 ```
 
-### Task 4: Durable synchronization job lifecycle
+### Задача 4: Надёжный жизненный цикл синхронизации
 
-**Files:**
-- Create: `backend/app/sync/repository.py`
-- Create: `backend/app/sync/service.py`
-- Create: `backend/app/sync/routes.py`
-- Create: `backend/app/sync/worker.py`
-- Modify: `backend/app/main.py`
-- Modify: `compose.yaml`
-- Create: `backend/tests/sync/test_job_repository.py`
-- Create: `backend/tests/sync/test_job_routes.py`
-- Create: `backend/tests/sync/test_worker_recovery.py`
+**Файлы:**
+- Создать: `backend/app/sync/repository.py`
+- Создать: `backend/app/sync/service.py`
+- Создать: `backend/app/sync/routes.py`
+- Создать: `backend/app/sync/worker.py`
+- Изменить: `backend/app/main.py`
+- Изменить: `compose.yaml`
+- Создать: `backend/tests/sync/test_job_repository.py`
+- Создать: `backend/tests/sync/test_job_routes.py`
+- Создать: `backend/tests/sync/test_worker_recovery.py`
 
-**Interfaces:**
-- Produces: `SyncJobRepository.create() -> SyncJob`, `claim_next(worker_id: str, lease_seconds: int) -> SyncJob | None`, `update_progress(job_id, progress: SyncProgress)`, `succeed(job_id, watermark: datetime)`, `fail(job_id, summary: str)`, `expire_stale_leases(now: datetime)`.
-- Produces: `SyncOrchestrator.run(job_id: UUID) -> None`; later tasks register ordered synchronization stages.
-- Produces: `POST /api/sync-jobs`, `GET /api/sync-jobs/current`, `GET /api/sync-jobs/{job_id}`.
+**Интерфейсы:**
+- Результат: `SyncJobRepository.create() -> SyncJob`, `claim_next(worker_id: str, lease_seconds: int) -> SyncJob | None`, `update_progress(job_id, progress: SyncProgress)`, `succeed(job_id, watermark: datetime)`, `fail(job_id, summary: str)`, `expire_stale_leases(now: datetime)`.
+- Результат: `SyncOrchestrator.run(job_id: UUID) -> None`; следующие задачи регистрируют последовательные этапы.
+- Результат: `POST /api/sync-jobs`, `GET /api/sync-jobs/current`, `GET /api/sync-jobs/{job_id}`.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [ ] **Шаг 1: Написать падающие тесты жизненного цикла**
 
-Test atomic claim with `FOR UPDATE SKIP LOCKED`, one pending/running job maximum, progress persistence, previous successful watermark preservation on failure, stale-lease expiration, retry idempotency and secret-free error summaries.
+Проверить atomic claim через `FOR UPDATE SKIP LOCKED`, единственный pending/running job, сохранение прогресса, неизменность предыдущего watermark при ошибке, истечение lease, идемпотентный retry и отсутствие секретов в error summary.
 
-- [ ] **Step 2: Run repository/worker tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты repository/worker и подтвердить падение**
 
-Run: `cd backend && pytest tests/sync/test_job_repository.py tests/sync/test_worker_recovery.py -v`
+Команда: `cd backend && pytest tests/sync/test_job_repository.py tests/sync/test_worker_recovery.py -v`
 
-Expected: FAIL because repository and worker services do not exist.
+Ожидание: FAIL, потому что repository и worker ещё не существуют.
 
-- [ ] **Step 3: Implement repository, orchestrator shell and worker loop**
+- [ ] **Шаг 3: Реализовать repository, оболочку orchestrator и worker loop**
 
-The worker polls PostgreSQL, claims one job, renews its lease between stages and records failures. It never advances the report watermark unless all registered stages succeed.
+Worker опрашивает PostgreSQL, забирает одно задание, продлевает lease между этапами и сохраняет ошибку. Report watermark меняется только после успеха всех этапов.
 
-- [ ] **Step 4: Write failing route tests, then implement routes**
+- [ ] **Шаг 4: Написать падающие route-тесты и реализовать routes**
 
-Assert `202` on job creation, `409` when a job is active, and distinct `pending/running/succeeded/failed` response schemas with progress and warnings.
+Проверить `202` при создании, `409` при активном job и отдельные схемы `pending/running/succeeded/failed` с progress и warnings.
 
-Run: `cd backend && pytest tests/sync/test_job_routes.py -v`
+Команда: `cd backend && pytest tests/sync/test_job_routes.py -v`
 
-Expected before route implementation: FAIL; expected after implementation: PASS.
+Ожидание: до реализации routes — FAIL, после — PASS.
 
-- [ ] **Step 5: Verify crash recovery and task integration**
+- [ ] **Шаг 5: Проверить восстановление после падения**
 
-Run: `cd backend && pytest tests/sync -v`
+Команда: `cd backend && pytest tests/sync -v`
 
-Expected: PASS, including simulated mid-stage crash and retry.
+Ожидание: PASS, включая имитацию падения между этапами и retry.
 
-- [ ] **Step 6: Commit**
+- [ ] **Шаг 6: Сделать коммит**
 
 ```bash
 git add backend/app/sync backend/app/main.py backend/tests/sync compose.yaml
 git commit -m "feat: add durable synchronization jobs"
 ```
 
-### Task 5: User, repository and identity synchronization
+### Задача 5: Синхронизация пользователей, репозиториев и идентичностей
 
-**Files:**
-- Create: `backend/app/activity/identity.py`
-- Create: `backend/app/activity/ingestion.py`
-- Create: `backend/tests/activity/test_identity.py`
-- Create: `backend/tests/activity/test_user_sync.py`
-- Modify: `backend/app/sync/service.py`
+**Файлы:**
+- Создать: `backend/app/activity/identity.py`
+- Создать: `backend/app/activity/ingestion.py`
+- Создать: `backend/tests/activity/test_identity.py`
+- Создать: `backend/tests/activity/test_user_sync.py`
+- Изменить: `backend/app/sync/service.py`
 
-**Interfaces:**
-- Produces: `IdentityResolver.resolve(email: str) -> AttributionResult`, with `matched`, `unmatched`, and `ambiguous` results.
-- Produces: `UserRepositorySync.run(job_id: UUID, client: GitLabClient, cutoff: datetime) -> StageResult`.
-- Stores active users, configured repositories, exact case-normalized aliases and data-quality warnings.
+**Интерфейсы:**
+- Результат: `IdentityResolver.resolve(email: str) -> AttributionResult` с исходами `matched`, `unmatched`, `ambiguous`.
+- Результат: `UserRepositorySync.run(job_id: UUID, client: GitLabClient, cutoff: datetime) -> StageResult`.
+- Сохраняются активные users, разрешённые repositories, точные case-normalized aliases и предупреждения качества данных.
 
-- [ ] **Step 1: Write failing identity tests**
+- [ ] **Шаг 1: Написать падающие тесты идентификации**
 
-Cover exact unique email, case normalization, GitLab noreply identity, shared/ambiguous email, unmatched email, bot/service masks, and explicit prohibition of fuzzy/name-only matching.
+Покрыть уникальный точный email, нормализацию регистра, GitLab noreply identity, общий/неоднозначный email, отсутствие совпадения, bot/service masks и запрет fuzzy/name-only matching.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/activity/test_identity.py -v`
+Команда: `cd backend && pytest tests/activity/test_identity.py -v`
 
-Expected: FAIL because `IdentityResolver` does not exist.
+Ожидание: FAIL, потому что `IdentityResolver` отсутствует.
 
-- [ ] **Step 3: Implement identity resolution**
+- [ ] **Шаг 3: Реализовать определение идентичности**
 
-Implement deterministic versioned rules only; return evidence and warning codes with every non-match.
+Использовать только детерминированные версионируемые правила; для каждого несовпадения возвращать evidence и warning code.
 
-- [ ] **Step 4: Write failing user/repository synchronization tests, then implement the stage**
+- [ ] **Шаг 4: Написать падающие тесты user/repository sync и реализовать этап**
 
-Assert active-state persistence, bot/service exclusion, project allowlist enforcement, idempotent upsert, missing-project coverage warning and stage progress.
+Проверить active state, исключение bot/service accounts, project allowlist, идемпотентный upsert, coverage warning для недоступного проекта и progress этапа.
 
-Run: `cd backend && pytest tests/activity/test_user_sync.py -v`
+Команда: `cd backend && pytest tests/activity/test_user_sync.py -v`
 
-Expected before implementation: FAIL; expected after implementation: PASS.
+Ожидание: до реализации — FAIL, после — PASS.
 
-- [ ] **Step 5: Register the stage and verify**
+- [ ] **Шаг 5: Зарегистрировать этап и проверить**
 
-Run: `cd backend && pytest tests/activity/test_identity.py tests/activity/test_user_sync.py tests/sync -v`
+Команда: `cd backend && pytest tests/activity/test_identity.py tests/activity/test_user_sync.py tests/sync -v`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Шаг 6: Сделать коммит**
 
 ```bash
 git add backend/app/activity backend/app/sync/service.py backend/tests/activity
 git commit -m "feat: synchronize GitLab users and repositories"
 ```
 
-### Task 6: Merge-request, commit and collaboration ingestion
+### Задача 6: Загрузка MR, commit и совместной работы
 
-**Files:**
-- Modify: `backend/app/activity/ingestion.py`
-- Create: `backend/tests/activity/test_activity_ingestion.py`
-- Create: `backend/tests/activity/test_review_sessions.py`
-- Create: `backend/tests/activity/test_commit_deduplication.py`
-- Modify: `backend/app/sync/service.py`
+**Файлы:**
+- Изменить: `backend/app/activity/ingestion.py`
+- Создать: `backend/tests/activity/test_activity_ingestion.py`
+- Создать: `backend/tests/activity/test_review_sessions.py`
+- Создать: `backend/tests/activity/test_commit_deduplication.py`
+- Изменить: `backend/app/sync/service.py`
 
-**Interfaces:**
-- Produces: `ActivitySync.run(job_id: UUID, client: GitLabClient, cutoff: datetime, now: datetime) -> StageResult`.
-- Produces: `group_review_sessions(events: Sequence[ReviewEvent], window: timedelta) -> list[ReviewSession]`.
-- Stores MR, commit, review and approval facts plus explicit availability status for optional metrics.
+**Интерфейсы:**
+- Результат: `ActivitySync.run(job_id: UUID, client: GitLabClient, cutoff: datetime, now: datetime) -> StageResult`.
+- Результат: `group_review_sessions(events: Sequence[ReviewEvent], window: timedelta) -> list[ReviewSession]`.
+- Сохраняются MR, commit, review, approval и явный availability status необязательных метрик.
 
-- [ ] **Step 1: Write failing MR and interval-semantics tests**
+- [ ] **Шаг 1: Написать падающие тесты MR и временных границ**
 
-Cover half-open `[start, end)` membership, UTC persistence, configured timezone conversion, MRs created before but merged inside the window, all currently open MRs regardless of age, and current-state labeling for open/stale metrics.
+Покрыть полуинтервал `[start, end)`, UTC storage, timezone conversion, MR созданный раньше, но merged внутри окна, все текущие open MR независимо от возраста и watermark для open/stale.
 
-- [ ] **Step 2: Write failing commit de-duplication tests**
+- [ ] **Шаг 2: Написать падающие тесты дедупликации commit**
 
-Cover MR commits versus merge/squash commits, direct target-branch commits, distinct-SHA cherry-picks, multiple target branches and stable GitLab source keys. Assert that one accepted change does not become both MR and direct contribution.
+Покрыть MR commits против merge/squash commits, direct target-branch commit, cherry-pick с отдельным SHA, несколько target branches и стабильные GitLab keys. Одно принятое изменение не должно одновременно считаться MR и direct contribution.
 
-- [ ] **Step 3: Write failing collaboration tests**
+- [ ] **Шаг 3: Написать падающие тесты collaboration**
 
-Cover system-note/bot exclusion, multiple comments grouped into one review session, self-review exclusion, approvals separate from reviews, approve/revoke handling, and explicit `unavailable` approval history.
+Покрыть исключение system notes/bots, объединение нескольких комментариев в review session, self-review, approvals отдельно от reviews, approve/revoke и явный `unavailable` для истории approvals.
 
-- [ ] **Step 4: Run tests and verify failure**
+- [ ] **Шаг 4: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/activity/test_activity_ingestion.py tests/activity/test_review_sessions.py tests/activity/test_commit_deduplication.py -v`
+Команда: `cd backend && pytest tests/activity/test_activity_ingestion.py tests/activity/test_review_sessions.py tests/activity/test_commit_deduplication.py -v`
 
-Expected: FAIL because activity synchronization is incomplete.
+Ожидание: FAIL, потому что activity sync ещё не реализован.
 
-- [ ] **Step 5: Implement activity synchronization**
+- [ ] **Шаг 5: Реализовать синхронизацию активности**
 
-Use `merged_at`, `committed_date`, review creation time and `closed_at` exactly as the spec defines. Persist current open/stale facts with the synchronization watermark and keep all writes idempotent.
+Использовать `merged_at`, `committed_date`, review creation time и `closed_at` строго по спецификации. Текущие open/stale facts сохранять с watermark; все записи должны быть идемпотентны.
 
-- [ ] **Step 6: Register the stage and verify**
+- [ ] **Шаг 6: Зарегистрировать этап и проверить**
 
-Run: `cd backend && pytest tests/activity -v`
+Команда: `cd backend && pytest tests/activity -v`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Шаг 7: Сделать коммит**
 
 ```bash
 git add backend/app/activity/ingestion.py backend/app/sync/service.py backend/tests/activity
 git commit -m "feat: synchronize developer activity facts"
 ```
 
-### Task 7: Transient diff processing and exclusion rules
+### Задача 7: Транзитная обработка diff и правила исключения
 
-**Files:**
-- Create: `backend/app/activity/diff_stats.py`
-- Create: `backend/tests/activity/test_diff_stats.py`
-- Create: `backend/tests/activity/test_diff_persistence.py`
-- Modify: `backend/app/activity/ingestion.py`
-- Modify: `backend/app/sync/service.py`
+**Файлы:**
+- Создать: `backend/app/activity/diff_stats.py`
+- Создать: `backend/tests/activity/test_diff_stats.py`
+- Создать: `backend/tests/activity/test_diff_persistence.py`
+- Изменить: `backend/app/activity/ingestion.py`
+- Изменить: `backend/app/sync/service.py`
 
-**Interfaces:**
-- Produces: `ExclusionRules.from_config(global_rules, repository_rules) -> ExclusionRules`.
-- Produces: `analyze_change(change: GitLabFileChange, rules: ExclusionRules) -> FileChangeStat`.
-- `FileChangeStat` contains path, additions, deletions, binary flag, classification (`production`, `test`, `docs_config`, `other`), exclusion flag and reason; it contains no diff body.
+**Интерфейсы:**
+- Результат: `ExclusionRules.from_config(global_rules, repository_rules) -> ExclusionRules`.
+- Результат: `analyze_change(change: GitLabFileChange, rules: ExclusionRules) -> FileChangeStat`.
+- `FileChangeStat` содержит path, additions, deletions, binary flag, classification (`production`, `test`, `docs_config`, `other`), exclusion flag и reason; diff body отсутствует.
 
-- [ ] **Step 1: Write failing classification/exclusion tests**
+- [ ] **Шаг 1: Написать падающие тесты классификации и исключений**
 
-Cover vendor/generated/build directories, lock files, minified assets, source maps, binary files, repository override precedence, test/docs/config classification and ordinary production files.
+Покрыть vendor/generated/build directories, lock files, minified assets, source maps, binary files, приоритет repository overrides, а также test/docs/config и обычные production files.
 
-- [ ] **Step 2: Run classification tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/activity/test_diff_stats.py -v`
+Команда: `cd backend && pytest tests/activity/test_diff_stats.py -v`
 
-Expected: FAIL because diff analysis does not exist.
+Ожидание: FAIL, потому что diff analysis отсутствует.
 
-- [ ] **Step 3: Implement transient analysis**
+- [ ] **Шаг 3: Реализовать транзитный анализ**
 
-Parse only enough diff content in memory to obtain counts when GitLab does not provide them. Return zero analytical lines plus an exclusion reason for excluded/binary files.
+Разбирать содержимое diff в памяти только настолько, насколько нужно для подсчёта. Для excluded/binary files возвращать нулевые аналитические строки и причину исключения.
 
-- [ ] **Step 4: Write failing persistence and multi-author attribution tests**
+- [ ] **Шаг 4: Написать падающие тесты persistence и multi-author attribution**
 
-Assert MR-level stats are attributed to the MR author, accepted MR changes are stored once, unmerged stats are contextual, excluded-file counts remain inspectable, and no database column/value retains raw patch text.
+Проверить, что MR-level stats относятся к автору MR, accepted changes сохраняются один раз, unmerged stats остаются контекстом, excluded counts доступны для проверки, а БД не содержит patch text.
 
-Run: `cd backend && pytest tests/activity/test_diff_persistence.py -v`
+Команда: `cd backend && pytest tests/activity/test_diff_persistence.py -v`
 
-Expected before ingestion integration: FAIL; expected after integration: PASS.
+Ожидание: до интеграции — FAIL, после — PASS.
 
-- [ ] **Step 5: Integrate diff processing into synchronization and verify**
+- [ ] **Шаг 5: Интегрировать обработку diff и проверить**
 
-Run: `cd backend && pytest tests/activity/test_diff_stats.py tests/activity/test_diff_persistence.py tests/activity/test_commit_deduplication.py -v`
+Команда: `cd backend && pytest tests/activity/test_diff_stats.py tests/activity/test_diff_persistence.py tests/activity/test_commit_deduplication.py -v`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Шаг 6: Сделать коммит**
 
 ```bash
 git add backend/app/activity/diff_stats.py backend/app/activity/ingestion.py backend/app/sync/service.py backend/tests/activity
 git commit -m "feat: calculate repository contribution statistics"
 ```
 
-### Task 8: Report time semantics and SQL query services
+### Задача 8: Временная семантика отчётов и SQL query services
 
-**Files:**
-- Create: `backend/app/reports/__init__.py`
-- Create: `backend/app/reports/time.py`
-- Create: `backend/app/reports/schemas.py`
-- Create: `backend/app/reports/queries.py`
-- Create: `backend/tests/reports/test_time_ranges.py`
-- Create: `backend/tests/reports/test_user_list_query.py`
-- Create: `backend/tests/reports/test_user_detail_queries.py`
+**Файлы:**
+- Создать: `backend/app/reports/__init__.py`
+- Создать: `backend/app/reports/time.py`
+- Создать: `backend/app/reports/schemas.py`
+- Создать: `backend/app/reports/queries.py`
+- Создать: `backend/tests/reports/test_time_ranges.py`
+- Создать: `backend/tests/reports/test_user_list_query.py`
+- Создать: `backend/tests/reports/test_user_detail_queries.py`
 
-**Interfaces:**
-- Produces: `ReportFilter(repository_id: int | None, start_date: date, end_date: date, timezone: str)` with validated 12-month availability.
-- Produces: `to_utc_interval(filter: ReportFilter) -> tuple[datetime, datetime]` using half-open boundaries.
-- Produces: `UserSort`, `PageRequest`, `UserPage`, and `CoverageStatus` response types in `reports/schemas.py`.
-- Produces: `ReportQueries.list_users(filter, sort: UserSort, page: PageRequest) -> UserPage`.
-- Produces: `get_user_summary(user_id, filter)`, `get_user_timeline(user_id, filter, granularity)`, `get_repository_contribution(user_id, filter)`, `list_source_facts(user_id, filter, kind, page)`.
+**Интерфейсы:**
+- Результат: `ReportFilter(repository_id: int | None, start_date: date, end_date: date, timezone: str)` с проверкой доступного 12-месячного окна.
+- Результат: `to_utc_interval(filter: ReportFilter) -> tuple[datetime, datetime]` с полуоткрытыми границами.
+- Результат: типы `UserSort`, `PageRequest`, `UserPage`, `CoverageStatus` в `reports/schemas.py`.
+- Результат: `ReportQueries.list_users(filter, sort: UserSort, page: PageRequest) -> UserPage`.
+- Результат: `get_user_summary(user_id, filter)`, `get_user_timeline(user_id, filter, granularity)`, `get_repository_contribution(user_id, filter)`, `list_source_facts(user_id, filter, kind, page)`.
 
-- [ ] **Step 1: Write failing time-range tests**
+- [ ] **Шаг 1: Написать падающие тесты периодов**
 
-Cover included human end date, UTC conversion, `Europe/Moscow`, a DST-observing IANA timezone, out-of-window rejection and automatic daily/weekly/monthly granularity cutovers.
+Покрыть включение выбранной пользователем конечной даты, UTC conversion, `Europe/Moscow`, timezone с DST, выход за доступное окно и автоматический выбор daily/weekly/monthly granularity.
 
-- [ ] **Step 2: Write failing list-query tests**
+- [ ] **Шаг 2: Написать падающие тесты списка пользователей**
 
-Assert all-repositories includes active users with zeros; one repository includes only users with qualifying activity; every metric is sortable; unavailable differs from zero; server pagination is stable; coverage/watermark metadata is returned.
+Проверить: «все репозитории» включает активных пользователей с нулевыми метриками; один репозиторий — только пользователей с активностью; каждая метрика сортируется; unavailable отличается от zero; pagination стабильна; coverage/watermark возвращаются.
 
-- [ ] **Step 3: Write failing person-query tests**
+- [ ] **Шаг 3: Написать падающие тесты карточки пользователя**
 
-Assert identical repository/date filters across summary, timeline, repository contribution and source facts; correct active-day/month semantics; median cycle time; line/file exclusions; current open/stale labeling; and source links built from stable GitLab identities.
+Проверить одинаковые repository/date filters в summary, timeline, repository contribution и source facts; active days/months; median cycle time; исключения строк/файлов; current open/stale labels и корректные GitLab links.
 
-- [ ] **Step 4: Run tests and verify failure**
+- [ ] **Шаг 4: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/reports/test_time_ranges.py tests/reports/test_user_list_query.py tests/reports/test_user_detail_queries.py -v`
+Команда: `cd backend && pytest tests/reports/test_time_ranges.py tests/reports/test_user_list_query.py tests/reports/test_user_detail_queries.py -v`
 
-Expected: FAIL because report services do not exist.
+Ожидание: FAIL, потому что report services отсутствуют.
 
-- [ ] **Step 5: Implement report schemas and SQL query services**
+- [ ] **Шаг 5: Реализовать схемы и SQL query services**
 
-Use normalized indexed facts first. Keep sorting as an enum/allowlist and never interpolate client field names into SQL. Add materialized aggregates only if the representative query-plan test proves they are needed.
+Сначала использовать нормализованные индексированные facts. Сортировку ограничить enum/allowlist; нельзя подставлять клиентские имена полей в SQL. Materialized aggregates добавлять только по результатам измерения query plan.
 
-- [ ] **Step 6: Verify report services**
+- [ ] **Шаг 6: Проверить report services**
 
-Run: `cd backend && pytest tests/reports -v`
+Команда: `cd backend && pytest tests/reports -v`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Шаг 7: Сделать коммит**
 
 ```bash
 git add backend/app/reports backend/tests/reports
 git commit -m "feat: add developer activity report queries"
 ```
 
-### Task 9: Report HTTP API and coverage contracts
+### Задача 9: HTTP API отчётов и контракты покрытия данных
 
-**Files:**
-- Create: `backend/app/reports/routes.py`
-- Modify: `backend/app/main.py`
-- Create: `backend/tests/reports/test_report_routes.py`
-- Create: `backend/tests/test_secret_redaction.py`
+**Файлы:**
+- Создать: `backend/app/reports/routes.py`
+- Изменить: `backend/app/main.py`
+- Создать: `backend/tests/reports/test_report_routes.py`
+- Создать: `backend/tests/test_secret_redaction.py`
 
-**Interfaces:**
-- Produces: `GET /api/repositories`.
-- Produces: `GET /api/report-rules` with non-secret target-branch, stale-MR, classification and exclusion rules plus their version.
-- Produces: `GET /api/users` with repository/date/search/sort/page parameters.
-- Produces: `GET /api/users/{user_id}/summary`, `/timeline`, `/repositories`, and `/sources`.
-- Every report response includes `watermark`, `coverage`, and applied report/exclusion-rule version.
+**Интерфейсы:**
+- Результат: `GET /api/repositories`.
+- Результат: `GET /api/report-rules` с несекретными target-branch, stale-MR, classification и exclusion rules и их версией.
+- Результат: `GET /api/users` с repository/date/search/sort/page.
+- Результат: `GET /api/users/{user_id}/summary`, `/timeline`, `/repositories`, `/sources`.
+- Каждый отчёт возвращает `watermark`, `coverage` и версию применённых правил.
 
-- [ ] **Step 1: Write failing route-contract tests**
+- [ ] **Шаг 1: Написать падающие контрактные route-тесты**
 
-Assert validated query parameters, `400/404/422` distinctions, stable JSON field names, pagination metadata, repository/date propagation, unavailable values serialized as explicit status rather than numeric zero, inspectable non-secret report rules, and correct GitLab source URLs.
+Проверить validation, различия `400/404/422`, стабильные JSON fields, pagination, propagation фильтров, явный status вместо числового zero для unavailable, доступные несекретные rules и корректные GitLab URLs.
 
-- [ ] **Step 2: Write failing security tests**
+- [ ] **Шаг 2: Написать падающие security-тесты**
 
-Exercise validation errors, GitLab client failures and sync failures; assert token values and authorization headers are absent from logs and every HTTP response.
+Вызвать validation, GitLab и sync errors; убедиться, что токены и authorization headers отсутствуют в логах и HTTP responses.
 
-- [ ] **Step 3: Run tests and verify failure**
+- [ ] **Шаг 3: Запустить тесты и подтвердить падение**
 
-Run: `cd backend && pytest tests/reports/test_report_routes.py tests/test_secret_redaction.py -v`
+Команда: `cd backend && pytest tests/reports/test_report_routes.py tests/test_secret_redaction.py -v`
 
-Expected: FAIL because report routes do not exist.
+Ожидание: FAIL, потому что report routes отсутствуют.
 
-- [ ] **Step 4: Implement route translation and register routers**
+- [ ] **Шаг 4: Реализовать routes и зарегистрировать router**
 
-Routes depend only on query-service interfaces from Task 8. Keep filtering and metric computation out of route handlers.
+Routes зависят только от query services задачи 8. Фильтрация и расчёт метрик в route handlers запрещены.
 
-- [ ] **Step 5: Verify all backend tests**
+- [ ] **Шаг 5: Проверить весь backend**
 
-Run: `cd backend && pytest -v`
+Команда: `cd backend && pytest -v`
 
-Expected: PASS with no warnings about unawaited work or leaked connections.
+Ожидание: PASS без unawaited work и утечек соединений.
 
-- [ ] **Step 6: Commit**
+- [ ] **Шаг 6: Сделать коммит**
 
 ```bash
 git add backend/app/reports/routes.py backend/app/main.py backend/tests
 git commit -m "feat: expose activity report API"
 ```
 
-### Task 10: Frontend API contracts, routing and synchronization UI
+### Задача 10: Frontend API, маршрутизация и UI синхронизации
 
-**Files:**
-- Create: `frontend/src/api/client.ts`
-- Create: `frontend/src/api/types.ts`
-- Create: `frontend/src/app/router.tsx`
-- Modify: `frontend/src/app/App.tsx`
-- Create: `frontend/src/features/sync/useSyncJob.ts`
-- Create: `frontend/src/features/sync/SyncPage.tsx`
-- Create: `frontend/src/features/sync/SyncPage.test.tsx`
-- Create: `frontend/src/test/fixtures.ts`
+**Файлы:**
+- Создать: `frontend/src/api/client.ts`
+- Создать: `frontend/src/api/types.ts`
+- Создать: `frontend/src/app/router.tsx`
+- Изменить: `frontend/src/app/App.tsx`
+- Создать: `frontend/src/features/sync/useSyncJob.ts`
+- Создать: `frontend/src/features/sync/SyncPage.tsx`
+- Создать: `frontend/src/features/sync/SyncPage.test.tsx`
+- Создать: `frontend/src/test/fixtures.ts`
 
-**Interfaces:**
-- Produces typed API functions matching Task 4 and Task 9 response schemas.
-- Produces routes `/developers`, `/developers/:userId`, `/synchronization`.
-- `useSyncJob()` polls while status is pending/running and stops on succeeded/failed.
+**Интерфейсы:**
+- Результат: типизированные API-функции, соответствующие контрактам задач 4 и 9.
+- Результат: маршруты `/developers`, `/developers/:userId`, `/synchronization`.
+- `useSyncJob()` опрашивает API в статусах pending/running и останавливается при succeeded/failed.
 
-- [ ] **Step 1: Write failing synchronization-page tests**
+- [ ] **Шаг 1: Написать падающие тесты страницы синхронизации**
 
-Cover no previous sync, start action, `409` active-job reuse, stage/project/item progress, elapsed/last-success timestamps, access warning, failure/retry and disabled duplicate start.
+Покрыть отсутствие предыдущей sync, запуск, reuse активного job после `409`, stage/project/item progress, elapsed/last-success timestamps, access warning, failure/retry и блокировку двойного запуска.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
-Run: `cd frontend && npm test -- --run src/features/sync/SyncPage.test.tsx`
+Команда: `cd frontend && npm test -- --run src/features/sync/SyncPage.test.tsx`
 
-Expected: FAIL because API client, router and page do not exist.
+Ожидание: FAIL, потому что API client, router и страница отсутствуют.
 
-- [ ] **Step 3: Implement typed client, router and synchronization page**
+- [ ] **Шаг 3: Реализовать API client, router и страницу**
 
-Use TanStack Query for mutation/polling. Render warnings separately from zero-like counts and never render a token field.
+Использовать TanStack Query для mutation/polling. Warnings отображать отдельно от числовых значений; формы ввода токена быть не должно.
 
-- [ ] **Step 4: Verify frontend sync behavior**
+- [ ] **Шаг 4: Проверить frontend sync**
 
-Run: `cd frontend && npm test -- --run src/features/sync/SyncPage.test.tsx src/app/App.test.tsx`
+Команда: `cd frontend && npm test -- --run src/features/sync/SyncPage.test.tsx src/app/App.test.tsx`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Шаг 5: Сделать коммит**
 
 ```bash
 git add frontend/src
 git commit -m "feat: add visible synchronization workflow"
 ```
 
-### Task 11: Developer list, global filters and sortable metrics
+### Задача 11: Список разработчиков, глобальные фильтры и сортировка
 
-**Files:**
-- Create: `frontend/src/features/reports/useReportFilters.ts`
-- Create: `frontend/src/features/reports/ReportFilters.tsx`
-- Create: `frontend/src/features/reports/UsersTable.tsx`
-- Create: `frontend/src/features/reports/UsersPage.tsx`
-- Create: `frontend/src/features/reports/UsersPage.test.tsx`
-- Modify: `frontend/src/app/router.tsx`
+**Файлы:**
+- Создать: `frontend/src/features/reports/useReportFilters.ts`
+- Создать: `frontend/src/features/reports/ReportFilters.tsx`
+- Создать: `frontend/src/features/reports/UsersTable.tsx`
+- Создать: `frontend/src/features/reports/UsersPage.tsx`
+- Создать: `frontend/src/features/reports/UsersPage.test.tsx`
+- Изменить: `frontend/src/app/router.tsx`
 
-**Interfaces:**
-- Produces: `ReportFilterState` synchronized with URL search params: `repository`, `start`, `end`, `search`, `sort`, `direction`, `page`.
-- Produces `UsersPage` using server-side sorting and pagination for every metric column from the spec.
+**Интерфейсы:**
+- Результат: `ReportFilterState`, синхронизированный с URL params `repository`, `start`, `end`, `search`, `sort`, `direction`, `page`.
+- Результат: `UsersPage` с серверной сортировкой и pagination по всем колонкам спецификации.
 
-- [ ] **Step 1: Write failing filter and table tests**
+- [ ] **Шаг 1: Написать падающие тесты фильтров и таблицы**
 
-Cover arbitrary dates, quick presets, repository selection, URL round-trip, user search, all column sorts, pagination reset on filter change, active users with zero values in all-repository mode, and repository-only active users in single-repository mode.
+Покрыть произвольные даты, quick presets, выбор репозитория, URL round-trip, поиск, сортировку всех колонок, сброс page при фильтре, users с нулём в all-repositories и только active users в single-repository.
 
-- [ ] **Step 2: Write failing state-presentation tests**
+- [ ] **Шаг 2: Написать падающие тесты состояний данных**
 
-Assert `0`, “Unavailable”, and “Not synchronized” render differently; coverage warnings and last-success watermark remain visible; the page never labels the table “ranking” or displays a composite score.
+Проверить разное отображение `0`, «Недоступно», «Не синхронизировано»; видимость coverage warnings и watermark; отсутствие терминов «рейтинг» и composite score.
 
-- [ ] **Step 3: Run tests and verify failure**
+- [ ] **Шаг 3: Запустить тесты и подтвердить падение**
 
-Run: `cd frontend && npm test -- --run src/features/reports/UsersPage.test.tsx`
+Команда: `cd frontend && npm test -- --run src/features/reports/UsersPage.test.tsx`
 
-Expected: FAIL because report controls and table do not exist.
+Ожидание: FAIL, потому что controls и table отсутствуют.
 
-- [ ] **Step 4: Implement filter state, controls and table**
+- [ ] **Шаг 4: Реализовать filters, controls и table**
 
-Use TanStack Table in manual sorting/pagination mode. The repository/date filter object passed to every query must come from `useReportFilters`.
+Использовать TanStack Table в manual sorting/pagination mode. Все запросы получают один repository/date filter из `useReportFilters`.
 
-- [ ] **Step 5: Verify the feature**
+- [ ] **Шаг 5: Проверить feature**
 
-Run: `cd frontend && npm test -- --run src/features/reports/UsersPage.test.tsx`
+Команда: `cd frontend && npm test -- --run src/features/reports/UsersPage.test.tsx`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Шаг 6: Сделать коммит**
 
 ```bash
 git add frontend/src/features/reports frontend/src/app/router.tsx
 git commit -m "feat: add sortable developer activity list"
 ```
 
-### Task 12: Detailed person card and repository contribution views
+### Задача 12: Подробная карточка человека и вклад в репозитории
 
-**Files:**
-- Create: `frontend/src/features/user/UserPage.tsx`
-- Create: `frontend/src/features/user/SummaryCards.tsx`
-- Create: `frontend/src/features/user/ActivityTimeline.tsx`
-- Create: `frontend/src/features/user/RepositoryContribution.tsx`
-- Create: `frontend/src/features/user/SourceFacts.tsx`
-- Create: `frontend/src/features/user/UserPage.test.tsx`
-- Modify: `frontend/src/app/router.tsx`
+**Файлы:**
+- Создать: `frontend/src/features/user/UserPage.tsx`
+- Создать: `frontend/src/features/user/SummaryCards.tsx`
+- Создать: `frontend/src/features/user/ActivityTimeline.tsx`
+- Создать: `frontend/src/features/user/RepositoryContribution.tsx`
+- Создать: `frontend/src/features/user/SourceFacts.tsx`
+- Создать: `frontend/src/features/user/UserPage.test.tsx`
+- Изменить: `frontend/src/app/router.tsx`
 
-**Interfaces:**
-- `UserPage` consumes the shared `ReportFilterState` and Task 9 endpoints.
-- `ActivityTimeline` accepts typed time buckets and selectable metric series.
-- `RepositoryContribution` renders repository totals, change composition, code areas and exclusions.
-- `SourceFacts` provides pageable MR/commit/review lists with GitLab links.
+**Интерфейсы:**
+- `UserPage` использует общий `ReportFilterState` и endpoints задачи 9.
+- `ActivityTimeline` принимает типизированные buckets и выбираемые series.
+- `RepositoryContribution` показывает totals, change composition, code areas, exclusions и версию правил.
+- `SourceFacts` показывает pageable MR/commit/review и ссылки в GitLab.
 
-- [ ] **Step 1: Write failing summary and timeline tests**
+- [ ] **Шаг 1: Написать падающие тесты summary и timeline**
 
-Assert totals, selected period/repository labels, automatic granularity data, series toggles, current-as-of watermark for open/stale MR, and unavailable approvals.
+Проверить totals, labels периода/репозитория, automatic granularity, series toggles, watermark для current open/stale MR и unavailable approvals.
 
-- [ ] **Step 2: Write failing repository-contribution tests**
+- [ ] **Шаг 2: Написать падающие тесты repository contribution**
 
-Assert added/deleted lines by month and repository, changed files, merged MRs, reviews, active months, production/test/docs/other composition, code-area paths and excluded-file counts.
-Assert the active classification/exclusion-rule version is visible and the non-secret rules can be inspected from the contribution view.
+Проверить добавленные/удалённые строки по месяцам и репозиториям, changed files, merged MR, reviews, active months, production/test/docs/other, code-area paths, excluded-file counts и просмотр несекретных rules.
 
-- [ ] **Step 3: Write failing source-fact tests**
+- [ ] **Шаг 3: Написать падающие тесты source facts**
 
-Assert pageable fact kinds, source links, unmerged work labeled context-only, and repository/date filter propagation to every request.
+Проверить pageable kinds, source links, маркировку unmerged work как context-only и propagation repository/date filters во все запросы.
 
-- [ ] **Step 4: Run tests and verify failure**
+- [ ] **Шаг 4: Запустить тесты и подтвердить падение**
 
-Run: `cd frontend && npm test -- --run src/features/user/UserPage.test.tsx`
+Команда: `cd frontend && npm test -- --run src/features/user/UserPage.test.tsx`
 
-Expected: FAIL because person-card components do not exist.
+Ожидание: FAIL, потому что компоненты карточки отсутствуют.
 
-- [ ] **Step 5: Implement the person card**
+- [ ] **Шаг 5: Реализовать карточку**
 
-Use ECharts for the timeline and accessible HTML tables for detailed repository/source data. Preserve filter search params when navigating from the user list and back.
+Использовать ECharts для timeline и доступные HTML tables для repository/source details. Сохранять filter params при переходах из списка и обратно.
 
-- [ ] **Step 6: Verify the feature and frontend suite**
+- [ ] **Шаг 6: Проверить feature и весь frontend**
 
-Run: `cd frontend && npm test -- --run`
+Команда: `cd frontend && npm test -- --run`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Шаг 7: Сделать коммит**
 
 ```bash
 git add frontend/src/features/user frontend/src/app/router.tsx
 git commit -m "feat: add detailed developer contribution view"
 ```
 
-### Task 13: End-to-end validation, operational documentation and release hardening
+### Задача 13: Сквозная проверка, эксплуатационная документация и подготовка релиза
 
-**Files:**
-- Create: `frontend/tests/report-flow.spec.ts`
-- Create: `backend/tests/integration/test_full_sync_report.py`
-- Modify: `compose.yaml`
-- Modify: `.env.example`
-- Modify: `README.md`
-- Create: `docs/operations.md`
+**Файлы:**
+- Создать: `frontend/tests/report-flow.spec.ts`
+- Создать: `backend/tests/integration/test_full_sync_report.py`
+- Изменить: `compose.yaml`
+- Изменить: `.env.example`
+- Изменить: `README.md`
+- Создать: `docs/operations.md`
 
-**Interfaces:**
-- Produces one documented local-GitLab-to-report workflow and production configuration procedure.
-- Produces health checks and startup ordering sufficient for `docker compose up`.
+**Интерфейсы:**
+- Результат: один документированный сценарий от локального GitLab до отчёта и инструкция production-конфигурации.
+- Результат: health checks и порядок запуска, достаточные для `docker compose up`.
 
-- [ ] **Step 1: Write the failing backend integration test**
+- [ ] **Шаг 1: Написать падающий backend integration test**
 
-Using deterministic GitLab HTTP fixtures and PostgreSQL, run a full sync and assert the list/card totals, excluded files, watermark, coverage warnings, retry idempotency and absence of raw diffs/secrets in persistence/logs.
+На детерминированных GitLab HTTP fixtures и PostgreSQL выполнить full sync; проверить list/card totals, exclusions, watermark, coverage warnings, idempotent retry и отсутствие raw diff/secrets в persistence/logs.
 
-- [ ] **Step 2: Run integration test and verify failure**
+- [ ] **Шаг 2: Запустить integration test и подтвердить падение**
 
-Run: `cd backend && pytest tests/integration/test_full_sync_report.py -v`
+Команда: `cd backend && pytest tests/integration/test_full_sync_report.py -v`
 
-Expected: FAIL until cross-feature fixture and any missing integration wiring are complete.
+Ожидание: FAIL, пока cross-feature fixture и wiring не завершены.
 
-- [ ] **Step 3: Complete integration wiring and pass the test**
+- [ ] **Шаг 3: Завершить интеграцию и провести тест**
 
-Make only the minimal cross-module changes required by the failing integration assertions.
+Внести только минимальные изменения между модулями, необходимые для failing assertions.
 
-Run: `cd backend && pytest tests/integration/test_full_sync_report.py -v`
+Команда: `cd backend && pytest tests/integration/test_full_sync_report.py -v`
 
-Expected: PASS.
+Ожидание: PASS.
 
-- [ ] **Step 4: Write the failing Playwright journey**
+- [ ] **Шаг 4: Написать падающий Playwright-сценарий**
 
-Cover start synchronization, observe progress, open the developer list, set an arbitrary date range, select one repository, sort by added lines, open a person, inspect monthly contribution and follow a source-link target.
+Покрыть запуск sync, progress, список пользователей, произвольный период, выбор репозитория, сортировку по added lines, карточку человека, помесячный вклад и source link.
 
-- [ ] **Step 5: Run Playwright and complete missing wiring**
+- [ ] **Шаг 5: Запустить Playwright и завершить wiring**
 
-Run: `cd frontend && npm run test:e2e`
+Команда: `cd frontend && npm run test:e2e`
 
-Expected before final wiring: FAIL at the first incomplete journey step; expected after fixes: PASS.
+Ожидание: до финального wiring — FAIL на первом незавершённом шаге; после исправлений — PASS.
 
-- [ ] **Step 6: Document secure operation**
+- [ ] **Шаг 6: Документировать безопасную эксплуатацию**
 
-Document local GitLab setup, required token scopes, Docker secret/environment use, project IDs, timezone, exclusion overrides, network-isolation requirement, first/incremental synchronization, backup/restore and token rotation. State explicitly that the metrics are GitLab activity observations, not performance verdicts.
+Описать local GitLab, scopes токена, Docker secret/environment, project IDs, timezone, exclusion overrides, обязательную network isolation, первую/инкрементальную sync, backup/restore и token rotation. Явно указать, что метрики описывают GitLab-активность, а не являются вердиктом о производительности.
 
-- [ ] **Step 7: Run full verification**
+- [ ] **Шаг 7: Выполнить полную проверку**
 
-Run: `cd backend && pytest -v`
+```bash
+cd backend && pytest -v
+cd frontend && npm test -- --run
+cd frontend && npm run build
+cd frontend && npm run test:e2e
+docker compose config --quiet
+git diff --check
+```
 
-Run: `cd frontend && npm test -- --run`
+Ожидание: все команды завершаются с кодом 0; нет failed tests, build errors, некорректного Compose или whitespace errors.
 
-Run: `cd frontend && npm run build`
-
-Run: `cd frontend && npm run test:e2e`
-
-Run: `docker compose config --quiet`
-
-Run: `git diff --check`
-
-Expected: every command exits 0; no failed tests, build errors, invalid Compose configuration or whitespace errors.
-
-- [ ] **Step 8: Commit**
+- [ ] **Шаг 8: Сделать коммит**
 
 ```bash
 git add backend/tests/integration frontend/tests compose.yaml .env.example README.md docs/operations.md
 git commit -m "test: validate GitLab activity analytics workflow"
 ```
 
-## Plan completion criteria
+## Критерии завершения плана
 
-- All 13 task commits exist and each task’s focused verification passed before its commit.
-- The full verification commands in Task 13 pass on the final tree.
-- The UI supports synchronization, all-user sorting, repository filtering, arbitrary in-window dates and the complete person card from the approved spec.
-- No ranking, score, anomaly label, external service, authentication feature, Celery or Redis was introduced.
-- The final branch is reviewed using the execution method selected at handoff.
+- Созданы все 13 task-коммитов; перед каждым прошли его фокусные проверки.
+- Полная проверка задачи 13 проходит на финальном дереве.
+- UI поддерживает синхронизацию, сортируемый список всех пользователей, выбор репозитория, произвольные даты в доступном окне и полную карточку из утверждённой спецификации.
+- Не добавлены рейтинг, баллы, anomaly labels, внешние сервисы, авторизация, Celery или Redis.
+- Финальная ветка проверена способом, выбранным при передаче плана в реализацию.
