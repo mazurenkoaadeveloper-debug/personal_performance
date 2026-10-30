@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "installed_at": "2026-10-31",
+  "skills": [
+    {
+      "name": "superpowers",
+      "repository": "obra/superpowers",
+      "commit": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b",
+      "source_path": "skills",
+      "installed_skills": [
+        "brainstorming",
+        "diagnosing-superpowers",
+        "dispatching-parallel-agents",
+        "executing-plans",
+        "finishing-a-development-branch",
+        "receiving-code-review",
+        "requesting-code-review",
+        "subagent-driven-development",
+        "systematic-debugging",
+        "test-driven-development",
+        "using-git-worktrees",
+        "using-superpowers",
+        "verification-before-completion",
+        "writing-plans",
+        "writing-skills"
+      ]
+    },
+    {
+      "name": "thermonuclear",
+      "repository": "bwrob/swig2pyi",
+      "commit": "2ff78a981db63f9cfed2ca10e2fc3e00f6912da1",
+      "source_path": ".agents/skills/thermonuclear"
+    },
+    {
+      "name": "persist",
+      "repository": "broomva/skills",
+      "commit": "dda73f46aa8dc2e34c63331adc5752f91edd2bf4",
+      "source_path": "skills/orchestration/persist"
+    },
+    {
+      "name": "obc",
+      "repository": "boan-anbo/obc",
+      "commit": "4edda56f6334f114d2fc3de17d25f3b5eaeda253",
+      "source_path": "."
+    },
+    {
+      "name": "gh-project",
+      "repository": "hashgraph-online/awesome-codex-plugins",
+      "commit": "16ca6b78fbd2f98bd404df9c2eb37eeefa8f682f",
+      "source_path": "plugins/zfifteen/gh-project-plugin/skills/gh-project"
+    }
+  ]
+}
