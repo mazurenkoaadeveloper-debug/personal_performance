@@ -11,7 +11,8 @@ from pydantic import SecretStr
 REDACTED = "[REDACTED]"
 SENSITIVE_KEY_PARTS = ("authorization", "token")
 SENSITIVE_VALUE_PATTERN = re.compile(
-    r"(?P<prefix>(?:access[_-]?token|private[_-]?token|authorization|token)=)"
+    r"(?P<prefix>(?:access[_-]?token|private[_-]?token|authorization|token)="
+    r"|authorization:\s+(?:Bearer\s+)?|private[_-]?token:\s*)"
     r"(?P<value>[^&\s\"']+)",
     flags=re.IGNORECASE,
 )

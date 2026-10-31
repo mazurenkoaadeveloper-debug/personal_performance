@@ -64,6 +64,19 @@ def test_logging_redacts_sensitive_values_recursively() -> None:
     assert "secret-object" not in encoded
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Authorization: Bearer bearer-secret", "Authorization: Bearer [REDACTED]"),
+        ("PRIVATE-TOKEN: private-secret", "PRIVATE-TOKEN: [REDACTED]"),
+    ],
+)
+def test_logging_redacts_header_values_in_message(message: str, expected: str) -> None:
+    redacted = redact_secrets(None, "info", {"event": message})
+
+    assert redacted["event"] == expected
+
+
 def test_configure_logging_structures_and_redacts_uvicorn_output(capsys) -> None:
     configure_logging()
 
