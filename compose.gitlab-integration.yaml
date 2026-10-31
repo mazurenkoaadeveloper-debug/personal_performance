@@ -1,0 +1,29 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ee:19.3.6-ee.0
+    profiles: [gitlab-integration]
+    hostname: gitlab
+    shm_size: 256m
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        nginx['listen_port'] = 80
+        letsencrypt['enable'] = false
+        prometheus_monitoring['enable'] = false
+    ports:
+      - "127.0.0.1:${GITLAB_TEST_HTTP_PORT:-8929}:80"
+    volumes:
+      - gitlab-test-config:/etc/gitlab
+      - gitlab-test-logs:/var/log/gitlab
+      - gitlab-test-data:/var/opt/gitlab
+    healthcheck:
+      test: [CMD-SHELL, "curl --fail --silent http://localhost/-/readiness?all=1 >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 60
+      start_period: 300s
+
+volumes:
+  gitlab-test-config:
+  gitlab-test-logs:
+  gitlab-test-data:

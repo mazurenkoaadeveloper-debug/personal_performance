@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+!.env.gitlab-integration.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/

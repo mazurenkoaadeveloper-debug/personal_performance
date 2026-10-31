@@ -4,9 +4,9 @@
 
 **Цель:** создать внутреннее веб-приложение, которое синхронизирует последние 12 месяцев данных из GitLab `19.3.6-ee` и показывает сортируемую статистику активности пользователей с подробной карточкой вклада каждого человека.
 
-**Архитектура:** модульный Python-монолит запускается двумя процессами — FastAPI API и специализированным worker синхронизации — поверх одной PostgreSQL. React SPA получает данные через отчётный API; фильтры работают по локальной БД, а GitLab-токен и содержимое diff остаются только на сервере и обрабатываются транзитно.
+**Архитектура:** модульный Python-монолит запускается двумя процессами — FastAPI API и специализированным worker синхронизации — поверх одной PostgreSQL. React SPA получает данные через отчётный API; фильтры работают по локальной БД, а GitLab-токен и содержимое diff остаются только на сервере и обрабатываются транзитно. Отдельный Docker Compose integration-профиль поднимает точный GitLab `19.3.6-ee`, детерминированно наполняет его и запускает live-интеграционные тесты вне быстрого тестового набора.
 
-**Стек:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, httpx, pytest; TypeScript, React, Vite, React Router, TanStack Query, TanStack Table, Material UI, Apache ECharts, Vitest, Testing Library, Playwright; Docker Compose.
+**Стек:** Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL, httpx, pytest; TypeScript, React, Vite, React Router, TanStack Query, TanStack Table, Material UI, Apache ECharts, Vitest, Testing Library, Playwright; Docker Compose; `gitlab/gitlab-ee:19.3.6-ee.0`.
 
 **Спецификация:** `docs/superpowers/specs/2026-10-31-gitlab-developer-activity-design.md`
 
@@ -22,6 +22,8 @@
 - Backend-схемы и UI должны различать нулевую активность, недоступные данные и ещё не синхронизированные данные.
 - Границы отчёта трактуются в настроенной IANA timezone, по умолчанию `Europe/Moscow`; все timestamp хранятся в UTC.
 - Каждая задача выполняется через TDD и коммитится только после прохождения указанных фокусных и релевантных общих тестов.
+- Live-интеграционные тесты используют только сгенерированные тестовые credentials, запускаются отдельной командой и обязательны перед релизом, но не входят в быстрый `pytest` по умолчанию.
+- Перед каждой следующей задачей после задачи 1 запускать `scripts/gitlab-integration/start.sh` и проверять readiness локального GitLab `19.3.6-ee`; для реализуемых GitLab-интерфейсов добавлять фокусные live-проверки, а детерминированный полный набор остаётся задачей 13.
 
 ## Особое внимание при ревью
 
@@ -47,7 +49,7 @@ backend/
     activity/{models.py,identity.py,ingestion.py,diff_stats.py}
     reports/{schemas.py,queries.py,routes.py,time.py}
   migrations/{env.py,versions/0001_initial_schema.py}
-  tests/{conftest.py,core/,gitlab/,sync/,activity/,reports/,integration/}
+  tests/{conftest.py,core/,gitlab/,sync/,activity/,reports/,integration/,gitlab_live/}
 frontend/
   package.json
   vite.config.ts
@@ -61,7 +63,10 @@ frontend/
     test/{setup.ts,fixtures.ts}
   tests/report-flow.spec.ts
 compose.yaml
+compose.gitlab-integration.yaml
 .env.example
+.env.gitlab-integration.example
+scripts/gitlab-integration/{start.sh,stop.sh,seed.py,run.sh}
 README.md
 docs/operations.md
 ```
@@ -73,8 +78,8 @@ docs/operations.md
 До передачи задачи 1 в работу в репозитории `mazurenkoaadeveloper-debug/personal_performance` нужно создать:
 
 - один родительский Issue «GitLab Developer Activity Analytics — первая версия» со ссылками на утверждённые спецификацию и план;
-- 13 отдельных Issues — по одному на каждую задачу этого плана;
-- ссылки на все 13 Issues в checklist родительского Issue;
+- 14 отдельных Issues — по одному на каждую задачу этого плана;
+- ссылки на все 14 Issues в checklist родительского Issue;
 - в каждом дочернем Issue: цель задачи, полный список файлов, интерфейсы, TDD-шаги, команды проверки, критерии завершения и ссылка на родительский Issue.
 
 Пользователь вручную выбирает следующий Issue для передачи в работу. После выбора применяется `subagent-driven-development`: свежий implementer выполняет только этот Issue, отдельный reviewer проверяет diff, исправления проходят повторное ревью. Автоматически начинать следующий Issue запрещено.
@@ -207,13 +212,13 @@ git commit -m "feat: add activity data schema"
 - Создать: `backend/tests/gitlab/fixtures/`
 
 **Интерфейсы:**
-- Результат: `GitLabClient(base_url: str, token: SecretStr, transport: httpx.AsyncBaseTransport | None = None)`.
+- Результат: `GitLabClient(base_url: str, token: SecretStr, transport: httpx.AsyncBaseTransport | None = None, page_size: int = 100)`; `page_size` ограничен диапазоном GitLab `1..100` и позволяет live-тесту доказать переход между страницами на маленьком fixture.
 - Результат: `get_version() -> GitLabVersion`, `validate_capabilities() -> CapabilityReport`, async-итераторы `iter_active_users()`, `iter_projects(project_ids)`, `iter_merge_requests(project_id, updated_after)`, `iter_commits(project_id, ref, since)`, `iter_discussions(project_id, mr_iid)`, `get_approvals(project_id, mr_iid)`, `iter_mr_changes(project_id, mr_iid)`.
 - `CapabilityReport` различает отсутствие обязательной возможности и недоступность необязательной метрики.
 
 - [ ] **Шаг 1: Написать падающие контрактные HTTP-тесты**
 
-Покрыть token header без утечки в логи, pagination с/без totals, `Retry-After`, ограниченные повторы `429` и временных `5xx`, немедленные типизированные ошибки `401/403`, принятие `19.3.6-ee`, отклонение несовместимой версии и необязательную недоступность истории approvals.
+Покрыть token header без утечки в логи, границы `page_size`, pagination с/без totals, `Retry-After`, ограниченные повторы `429` и временных `5xx`, немедленные типизированные ошибки `401/403`, принятие `19.3.6-ee`, отклонение несовместимой версии и необязательную недоступность истории approvals.
 
 - [ ] **Шаг 2: Запустить тесты и подтвердить падение**
 
@@ -678,7 +683,79 @@ git add frontend/src/features/user frontend/src/app/router.tsx
 git commit -m "feat: add detailed developer contribution view"
 ```
 
-### Задача 13: Сквозная проверка, эксплуатационная документация и подготовка релиза
+### Задача 13: Локальный GitLab 19.3.6-ee в Docker и live-интеграционные тесты
+
+**Файлы:**
+- Изменить: `compose.gitlab-integration.yaml`
+- Изменить: `scripts/gitlab-integration/start.sh`
+- Создать: `scripts/gitlab-integration/seed.py`
+- Создать: `scripts/gitlab-integration/run.sh`
+- Создать: `backend/tests/gitlab_live/conftest.py`
+- Создать: `backend/tests/gitlab_live/test_client_against_gitlab.py`
+- Создать: `backend/tests/gitlab_live/test_full_sync_against_gitlab.py`
+- Изменить: `backend/pyproject.toml`
+- Изменить: `.gitignore`
+- Изменить: `README.md`
+
+**Интерфейсы:**
+- Compose profile `gitlab-integration` добавляет test-only сервисы `gitlab`, `gitlab-seed` и `gitlab-integration-runner`; `gitlab` использует строго `gitlab/gitlab-ee:19.3.6-ee.0`, отдельные volumes и healthcheck, а обычный `docker compose up` эти сервисы не запускает.
+- `seed.py --base-url URL --root-token TOKEN --output PATH` идемпотентно создаёт namespace `activity-integration`, три активных пользователя, bot/service user, три проекта, target-branch commits, merge/squash commits, direct commit, MR, discussion, approval и исключаемые generated/vendor/binary changes; затем атомарно пишет JSON manifest со стабильными GitLab ID/IID/SHA и ожидаемыми totals без токена.
+- `GitLabClient(..., page_size=2)` в live-тесте обязан пройти более одной реальной страницы пользователей и проектов.
+- `run.sh` поднимает профиль, ждёт readiness с настраиваемым timeout, получает только test-only root token внутри integration-среды, запускает seed и `pytest -m gitlab_integration`, повторяет seed и full sync для проверки идемпотентности. При timeout/failure он печатает диагностический status и ограниченный tail логов без credentials; при успехе останавливает test-only сервисы.
+- Pytest marker `gitlab_integration` исключён из default test command и является отдельным обязательным release-gate.
+
+- [ ] **Шаг 1: Написать падающие live-тесты GitLab-клиента**
+
+В `test_client_against_gitlab.py` проверить точные version/edition `19.3.6-ee`, capability report и реальные DTO для users/projects/MR/commits/discussions/approvals/changes. Создать клиент с `page_size=2` и доказать, что результаты включают объекты со второй страницы без дублей.
+
+- [ ] **Шаг 2: Написать падающий live-тест полного sync и отчёта**
+
+В `test_full_sync_against_gitlab.py` прочитать manifest, выполнить sync в чистую PostgreSQL, проверить attribution, merged/direct deduplication, review/approval, excluded lines, source URLs, coverage и report totals из manifest. Повторить sync и проверить неизменность числа фактов и totals.
+
+- [ ] **Шаг 3: Зарегистрировать отдельный test marker и подтвердить изоляцию набора**
+
+Добавить marker `gitlab_integration` в `backend/pyproject.toml`, пометить весь `backend/tests/gitlab_live/` и настроить default pytest так, чтобы `cd backend && pytest -v` не требовал GitLab.
+
+Команда: `cd backend && pytest --collect-only -q`
+
+Ожидание: live-тесты распознаются, но исключаются из default selection; прямой `pytest -m gitlab_integration` завершается FAIL без integration environment.
+
+- [ ] **Шаг 4: Реализовать изолированный Compose-профиль и readiness**
+
+Расширить существующий изолированный профиль pinned GitLab EE сервисами seed и integration-runner. `start.sh` проверяет container health и `/-/readiness`, завершается по timeout и не выводит credentials. Не добавлять GitLab в production/default services.
+
+Команда: `docker compose -f compose.yaml -f compose.gitlab-integration.yaml --profile gitlab-integration config --quiet`
+
+Ожидание: PASS; resolved image GitLab равен `gitlab/gitlab-ee:19.3.6-ee.0`.
+
+- [ ] **Шаг 5: Реализовать идемпотентный seed**
+
+Через GitLab API и Git over HTTP создать fixture из интерфейса задачи. Для тестового admin token использовать GitLab Rails runner только внутри контейнера; не писать token в manifest, stdout, git remote или файлы репозитория. Повторный seed должен находить/обновлять fixture по стабильным path/username и не дублировать активность.
+
+- [ ] **Шаг 6: Реализовать единый runner и добиться прохождения live-suite**
+
+Команда: `scripts/gitlab-integration/run.sh`
+
+Ожидание: GitLab достигает ready, seed и reseed завершаются успешно, оба live-тестовых модуля PASS, повторный sync не создаёт дубликатов, после успешного запуска test-only containers остановлены.
+
+- [ ] **Шаг 7: Проверить повторяемость с уже существующими volumes**
+
+Команда: `scripts/gitlab-integration/run.sh`
+
+Ожидание: второй полный запуск PASS на сохранённом GitLab volume; fixture IDs из manifest стабильны, activity facts и report totals не удваиваются. Скрипт документирует отдельный явный reset volumes для диагностики, но сам не удаляет их.
+
+- [ ] **Шаг 8: Документировать требования и диагностику**
+
+В README описать Docker resources, первый медленный startup, команду запуска, timeout override, расположение диагностических логов, безопасный reset только integration volumes и различие между mock, live-GitLab и Playwright suites. `.env.gitlab-integration.example` содержит только безопасные placeholder/generated значения.
+
+- [ ] **Шаг 9: Сделать коммит**
+
+```bash
+git add compose.gitlab-integration.yaml .env.gitlab-integration.example scripts/gitlab-integration backend/tests/gitlab_live backend/pyproject.toml .gitignore README.md
+git commit -m "test: add Dockerized GitLab integration suite"
+```
+
+### Задача 14: Сквозная проверка, эксплуатационная документация и подготовка релиза
 
 **Файлы:**
 - Создать: `frontend/tests/report-flow.spec.ts`
@@ -731,7 +808,9 @@ cd backend && pytest -v
 cd frontend && npm test -- --run
 cd frontend && npm run build
 cd frontend && npm run test:e2e
+scripts/gitlab-integration/run.sh
 docker compose config --quiet
+docker compose -f compose.yaml -f compose.gitlab-integration.yaml --profile gitlab-integration config --quiet
 git diff --check
 ```
 
@@ -746,9 +825,9 @@ git commit -m "test: validate GitLab activity analytics workflow"
 
 ## Критерии завершения плана
 
-- До реализации созданы родительский GitHub Issue и 13 дочерних Issues, соответствующих задачам плана.
-- Созданы все 13 task-коммитов; перед каждым прошли его фокусные проверки.
-- Полная проверка задачи 13 проходит на финальном дереве.
+- До реализации созданы родительский GitHub Issue и 14 дочерних Issues, соответствующих задачам плана.
+- Созданы все 14 task-коммитов; перед каждым прошли его фокусные проверки.
+- Полная проверка задачи 14, включая live-интеграцию с Dockerized GitLab `19.3.6-ee`, проходит на финальном дереве.
 - UI поддерживает синхронизацию, сортируемый список всех пользователей, выбор репозитория, произвольные даты в доступном окне и полную карточку из утверждённой спецификации.
 - Не добавлены рейтинг, баллы, anomaly labels, внешние сервисы, авторизация, Celery или Redis.
 - Финальная ветка проверена способом, выбранным при передаче плана в реализацию.
