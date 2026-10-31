@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: activity
+      POSTGRES_USER: activity
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-activity-dev-password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U activity -d activity"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    image: python:3.11-slim
+    working_dir: /workspace/backend
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        export DATABASE_URL="$$(python -m app.core.database_url)"
+        pip install --no-cache-dir .
+        exec uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-activity-dev-password}
+      GITLAB_BASE_URL: ${GITLAB_BASE_URL:-http://gitlab.example.invalid}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_PROJECT_IDS: ${GITLAB_PROJECT_IDS:-[]}
+      REPORT_TIMEZONE: ${REPORT_TIMEZONE:-Europe/Moscow}
+      RETENTION_DAYS: ${RETENTION_DAYS:-365}
+    volumes:
+      - .:/workspace:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  sync-worker:
+    image: python:3.11-slim
+    command: ["sh", "-c", "echo 'not implemented'; exit 0"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /workspace/frontend
+    command: sh -c "npm ci && npm run dev"
+    environment:
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      VITE_API_PROXY_TARGET: http://api:8000
+    volumes:
+      - .:/workspace:ro
+      - frontend-node-modules:/workspace/frontend/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  frontend-node-modules:
