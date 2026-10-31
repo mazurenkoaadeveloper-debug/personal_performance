@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     retention_days: int = Field(default=365, gt=0)
     gitlab_project_ids: tuple[int, ...]
 
+    @field_validator("gitlab_token")
+    @classmethod
+    def reject_blank_gitlab_token(cls, token: SecretStr) -> SecretStr:
+        if not token.get_secret_value().strip():
+            raise ValueError("GitLab token must not be blank")
+        return token
+
     @field_validator("gitlab_project_ids")
     @classmethod
     def require_project_allowlist(cls, value: tuple[int, ...]) -> tuple[int, ...]:
