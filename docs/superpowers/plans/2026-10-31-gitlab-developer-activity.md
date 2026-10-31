@@ -23,6 +23,7 @@
 - Границы отчёта трактуются в настроенной IANA timezone, по умолчанию `Europe/Moscow`; все timestamp хранятся в UTC.
 - Каждая задача выполняется через TDD и коммитится только после прохождения указанных фокусных и релевантных общих тестов.
 - Live-интеграционные тесты используют только сгенерированные тестовые credentials, запускаются отдельной командой и обязательны перед релизом, но не входят в быстрый `pytest` по умолчанию.
+- Перед каждой следующей задачей после задачи 1 запускать `scripts/gitlab-integration/start.sh` и проверять readiness локального GitLab `19.3.6-ee`; для реализуемых GitLab-интерфейсов добавлять фокусные live-проверки, а детерминированный полный набор остаётся задачей 13.
 
 ## Особое внимание при ревью
 
@@ -65,7 +66,7 @@ compose.yaml
 compose.gitlab-integration.yaml
 .env.example
 .env.gitlab-integration.example
-scripts/gitlab-integration/{wait-ready.sh,seed.py,run.sh}
+scripts/gitlab-integration/{start.sh,stop.sh,seed.py,run.sh}
 README.md
 docs/operations.md
 ```
@@ -685,9 +686,8 @@ git commit -m "feat: add detailed developer contribution view"
 ### Задача 13: Локальный GitLab 19.3.6-ee в Docker и live-интеграционные тесты
 
 **Файлы:**
-- Создать: `compose.gitlab-integration.yaml`
-- Создать: `.env.gitlab-integration.example`
-- Создать: `scripts/gitlab-integration/wait-ready.sh`
+- Изменить: `compose.gitlab-integration.yaml`
+- Изменить: `scripts/gitlab-integration/start.sh`
 - Создать: `scripts/gitlab-integration/seed.py`
 - Создать: `scripts/gitlab-integration/run.sh`
 - Создать: `backend/tests/gitlab_live/conftest.py`
@@ -722,7 +722,7 @@ git commit -m "feat: add detailed developer contribution view"
 
 - [ ] **Шаг 4: Реализовать изолированный Compose-профиль и readiness**
 
-Добавить pinned GitLab EE service, test-only volumes/network, seed и integration-runner. `wait-ready.sh` должен проверять container health и `/-/readiness`, завершаться по timeout и не выводить credentials. Не добавлять GitLab в production/default services.
+Расширить существующий изолированный профиль pinned GitLab EE сервисами seed и integration-runner. `start.sh` проверяет container health и `/-/readiness`, завершается по timeout и не выводит credentials. Не добавлять GitLab в production/default services.
 
 Команда: `docker compose -f compose.yaml -f compose.gitlab-integration.yaml --profile gitlab-integration config --quiet`
 
